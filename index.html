@@ -26,9 +26,36 @@
       display: none;
     }
 
-    canvas {
+    #appContainer {
+      position: relative;
       width: 100%;
       height: 100%;
+      overflow: hidden;
+      background: #000;
+    }
+
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #videoCanvas {
+      z-index: 1;
+    }
+
+    #blurCanvas {
+      z-index: 2;
+      -webkit-filter: blur(14px) saturate(0.9);
+      filter: blur(14px) saturate(0.9);
+      pointer-events: none;
+      will-change: mask-image, -webkit-mask-image;
+    }
+
+    #hudCanvas {
+      z-index: 3;
+      pointer-events: none;
     }
 
     /* ===== START OVERLAY (Apple Style) ===== */
@@ -633,7 +660,11 @@
 
   <video id="video" autoplay playsinline></video>
 
-  <canvas id="canvas"></canvas>
+  <div id="appContainer">
+    <canvas id="videoCanvas"></canvas>
+    <canvas id="blurCanvas"></canvas>
+    <canvas id="hudCanvas"></canvas>
+  </div>
 
   <div id="priceIndicator">₩ 0</div>
 
@@ -675,7 +706,15 @@
     // =========================================================
 
     const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
+
+    // 3중 레이어 캔버스 연동 (Safari/Chrome 100% 하드웨어 가속 블러 보장)
+    const videoCanvas = document.getElementById('videoCanvas');
+    const vctx = videoCanvas.getContext('2d');
+
+    const blurCanvas = document.getElementById('blurCanvas');
+    const bctx = blurCanvas.getContext('2d');
+
+    const canvas = document.getElementById('hudCanvas'); // 기존 변수명 그대로 유지하여 호환성 확보
     const ctx = canvas.getContext('2d');
 
     const priceIndicator = document.getElementById('priceIndicator');
@@ -687,20 +726,15 @@
     let W = innerWidth;
     let H = innerHeight;
 
-    canvas.width = W * dpr;
-    canvas.height = H * dpr;
+    // 3개 캔버스 크기 일괄 조율 및 디바이스 픽셀 비율 적용
+    [videoCanvas, blurCanvas, canvas].forEach(c => {
+      c.width = W * dpr;
+      c.height = H * dpr;
+    });
+
+    vctx.scale(dpr, dpr);
+    bctx.scale(dpr, dpr);
     ctx.scale(dpr, dpr);
-
-    // =========================================================
-    // OVERLAY CANVAS
-    // =========================================================
-
-    const overlayCanvas = document.createElement('canvas');
-    const overlayCtx = overlayCanvas.getContext('2d');
-
-    overlayCanvas.width = W * dpr;
-    overlayCanvas.height = H * dpr;
-    overlayCtx.scale(dpr, dpr);
 
     // =========================================================
     // ANALYSIS CANVAS (얼굴 분석 초경량화용 오프스크린 캔버스 및 Throttling 상태)
@@ -1430,15 +1464,28 @@
           if (!isCamRunning) return;
 
           if (video.readyState === video.HAVE_ENOUGH_DATA) {
-            // [1] 원본 비디오를 메인 캔버스에 직접 60fps로 실시간 드로잉 (분석이 늦어져도 화면 멈춤 원천 해결)
-            ctx.clearRect(0, 0, W, H);
-            ctx.save();
-            ctx.translate(W, 0);
-            ctx.scale(-1, 1);
-            ctx.drawImage(video, 0, 0, W, H);
-            ctx.restore();
+            // [1] 원본 비디오를 바닥 레이어(videoCanvas)에 실시간 드로잉
+            vctx.clearRect(0, 0, W, H);
+            vctx.save();
+            vctx.translate(W, 0);
+            vctx.scale(-1, 1);
+            vctx.drawImage(video, 0, 0, W, H);
+            vctx.restore();
 
-            // [2] 얼굴이 끊긴 지 0.5초가 지나면 마스크 사이즈를 부드럽게 키워 블러 자동 제거
+            // [2] 실시간 비디오를 중간 레이어(blurCanvas)에도 드로잉 (CSS filter에 의해 자동 14px 하드웨어 가속 블러 처리됨)
+            bctx.clearRect(0, 0, W, H);
+            bctx.save();
+            bctx.translate(W, 0);
+            bctx.scale(-1, 1);
+            bctx.drawImage(video, 0, 0, W, H);
+            bctx.restore();
+
+            // 은은한 필름 노이즈 질감을 중간 블러 레이어에 합성
+            bctx.globalAlpha = 0.32;
+            bctx.drawImage(noiseCanvas, 0, 0);
+            bctx.globalAlpha = 1;
+
+            // [3] 얼굴이 끊긴 지 0.5초가 지나면 마스크 사이즈를 부드럽게 키워 블러 자동 제거
             const timeSinceLastDetection = Date.now() - lastFaceDetectedTime;
             if (timeSinceLastDetection > 500) {
               otherFaces = [];
@@ -1446,75 +1493,20 @@
               targetActiveFace.size = W * 1.5;
             }
 
-            // [3] 부드러운 Lerp 보간 계산 (60fps 기반으로 동작하므로 극도로 부드러움)
+            // [4] 부드러운 Lerp 보간 계산 (60fps 기반으로 동작하므로 극도로 부드러움)
             activeFace.x += (targetActiveFace.x - activeFace.x) * 0.1;
             activeFace.y += (targetActiveFace.y - activeFace.y) * 0.1;
             activeFace.size += (targetActiveFace.size - activeFace.size) * 0.05;
 
-            // [4] 백그라운드 overlayCanvas에 실시간 블러와 마스크 합성 수행
-            overlayCtx.clearRect(0, 0, W, H);
-            overlayCtx.save();
-            overlayCtx.translate(W, 0);
-            overlayCtx.scale(-1, 1);
-
-            // 크롬(native)과 사파리(SVG reference) 모두 호환되는 듀얼 블러 필터 적용
-            overlayCtx.filter = 'url(#canvasBlur)';
-            overlayCtx.drawImage(video, 0, 0, W, H);
-            overlayCtx.restore();
-            overlayCtx.filter = 'none';
-
-            // 노이즈 추가
-            overlayCtx.globalAlpha = 0.32;
-            overlayCtx.drawImage(noiseCanvas, 0, 0);
-            overlayCtx.globalAlpha = 1;
-
-            // 마스크 구멍 뚫기 (destination-out)
-            overlayCtx.globalCompositeOperation = 'destination-out';
-
-            // OTHER FACES (Level 2: 40~50% 선명도)
-            otherFaces.forEach(face => {
-              const r = face.size * 1.2;
-              const g = overlayCtx.createRadialGradient(
-                face.x,
-                face.y,
-                r * 0.1,
-                face.x,
-                face.y,
-                r
-              );
-              g.addColorStop(0, 'rgba(0,0,0,0.45)');
-              g.addColorStop(1, 'rgba(0,0,0,0)');
-              overlayCtx.fillStyle = g;
-              overlayCtx.fillRect(0, 0, W, H);
-            });
-
-            // ACTIVE FACE (Level 1: 거의 완전 선명)
+            // [5] 사파리/크롬 100% 하드웨어 가속 CSS 마스크 그라데이션 실시간 생성 및 반영
+            // 활성 화자 얼굴 위치만 선명하게 구멍 뚫기
             const r = activeFace.size * 1.6;
-            const hole = overlayCtx.createRadialGradient(
-              activeFace.x,
-              activeFace.y,
-              r * 0.15,
-              activeFace.x,
-              activeFace.y,
-              r
-            );
-            hole.addColorStop(0, 'rgba(0,0,0,1)');
-            hole.addColorStop(0.6, 'rgba(0,0,0,0.7)');
-            hole.addColorStop(1, 'rgba(0,0,0,0)');
+            const maskStyle = `radial-gradient(circle at ${activeFace.x}px ${activeFace.y}px, rgba(0,0,0,0) ${r * 0.15}px, rgba(0,0,0,0.6) ${r * 0.5}px, rgba(0,0,0,1) ${r}px)`;
+            blurCanvas.style.webkitMaskImage = maskStyle;
+            blurCanvas.style.maskImage = maskStyle;
 
-            overlayCtx.fillStyle = hole;
-            overlayCtx.fillRect(0, 0, W, H);
-
-            overlayCtx.globalCompositeOperation = 'source-over';
-
-            // [5] 백그라운드 캔버스의 고화질 블러 레이어를 메인에 합성
-            ctx.drawImage(
-              overlayCanvas,
-              0,
-              0,
-              W,
-              H
-            );
+            // [6] 최상위 HUD 레이어(hudCanvas)는 매 프레임 클리어 후 선명하게 자막/텍스트를 60fps로 드로잉
+            ctx.clearRect(0, 0, W, H);
 
             // [6] 가장자리 다크 비네팅(EDGE VIGNETTE) 적용
             const edge = ctx.createRadialGradient(
@@ -1644,7 +1636,11 @@
       }
 
       // 3. 캔버스 초기화
+      vctx.clearRect(0, 0, W, H);
+      bctx.clearRect(0, 0, W, H);
       ctx.clearRect(0, 0, W, H);
+      blurCanvas.style.webkitMaskImage = 'none';
+      blurCanvas.style.maskImage = 'none';
 
       // 4. 가격 인디케이터 숨김 및 상태 초기화
       priceIndicator.classList.remove('show');
