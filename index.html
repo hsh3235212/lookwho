@@ -527,6 +527,7 @@
       border:
         1px solid rgba(255, 255, 255, 0.08);
 
+      -webkit-backdrop-filter: blur(14px);
       backdrop-filter: blur(14px);
 
       color: white;
@@ -619,6 +620,14 @@
 
 <body>
 
+  <!-- Safari/iOS 캔버스 블러 호환성 지원용 SVG 필터 -->
+  <svg style="display:none;">
+    <filter id="canvasBlur">
+      <feGaussianBlur stdDeviation="14" />
+      <feColorMatrix type="saturate" values="0.9" />
+    </filter>
+  </svg>
+
   <!-- 처음으로 돌아가기 버튼 -->
   <button id="homeBtn">← 처음으로</button>
 
@@ -674,11 +683,13 @@
 
     let cam = null;
 
+    const dpr = window.devicePixelRatio || 1;
     let W = innerWidth;
     let H = innerHeight;
 
-    canvas.width = W;
-    canvas.height = H;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    ctx.scale(dpr, dpr);
 
     // =========================================================
     // OVERLAY CANVAS
@@ -687,8 +698,22 @@
     const overlayCanvas = document.createElement('canvas');
     const overlayCtx = overlayCanvas.getContext('2d');
 
-    overlayCanvas.width = W;
-    overlayCanvas.height = H;
+    overlayCanvas.width = W * dpr;
+    overlayCanvas.height = H * dpr;
+    overlayCtx.scale(dpr, dpr);
+
+    // =========================================================
+    // ANALYSIS CANVAS (얼굴 분석 초경량화용 오프스크린 캔버스 및 Throttling 상태)
+    // =========================================================
+
+    const analysisCanvas = document.createElement('canvas');
+    const analysisCtx = analysisCanvas.getContext('2d');
+
+    analysisCanvas.width = 480;
+    analysisCanvas.height = 270;
+
+    let isAnalyzing = false;
+    let lastAnalysisTime = 0;
 
     // =========================================================
     // NOISE
@@ -784,64 +809,95 @@
     // =========================================================
 
     function lookupPrice(text) {
-
       if (!text) return null;
 
-      let item = null;
-      let qty = null;
+      // 1. 텍스트 정제 및 준비
+      let t = ' ' + text + ' ';
+      const registeredProducts = Object.keys(priceDB);
 
-      for (const key of Object.keys(priceDB)) {
-
-        if (text.includes(key)) {
-
-          item = key;
-          break;
+      // 2. 발화 텍스트 내 등록 상품 검색 및 위치 기록
+      let foundProducts = [];
+      registeredProducts.forEach(prod => {
+        const idx = t.indexOf(prod);
+        if (idx !== -1) {
+          foundProducts.push({ name: prod, index: idx });
         }
-      }
+      });
 
-      if (!item) return null;
+      // 발견된 상품이 없으면 가격 조회를 할 수 없음
+      if (foundProducts.length === 0) return null;
 
-      const numeric = text.match(/(\d+)\s*(개|마리|봉지|팩|단|봉)/);
+      // 등장 인덱스 오름차순 정렬 (발화 순서 유지)
+      foundProducts.sort((a, b) => a.index - b.index);
 
-      if (numeric) {
+      let totalCombinedPrice = 0;
+      let matchedItems = [];
 
-        qty = parseInt(numeric[1]);
-      }
+      // 3. 각 발견된 상품의 수량 파악 및 개별 가격 계산 후 합산
+      for (let i = 0; i < foundProducts.length; i++) {
+        const current = foundProducts[i];
+        const startIdx = current.index + current.name.length;
+        const endIdx = (i < foundProducts.length - 1) ? foundProducts[i + 1].index : t.length;
+        let segment = t.substring(startIdx, endIdx).trim();
 
-      if (!qty) {
+        // 세그먼트 내 한글 수사 숫자 치환
+        for (const [k, v] of Object.entries(quantityMap)) {
+          segment = segment.replace(new RegExp(k + '(?=\\s*(개|마리|봉지|팩|단|봉|\\s|$))', 'g'), v);
+        }
 
-        for (const [word, num] of Object.entries(quantityMap)) {
+        // 수량(qty) 파싱
+        let qty = null;
 
-          const re = new RegExp(word + '\\s*(개|마리|봉지|팩|단|봉)');
+        // 3-1. 숫자 + 단위 형태 매칭 (예: "2마리")
+        const matchQtyUnit = segment.match(/(\d+)\s*(개|마리|봉지|팩|단|봉)/);
+        if (matchQtyUnit) {
+          qty = parseInt(matchQtyUnit[1]);
+        }
 
-          if (re.test(text)) {
-            qty = num;
-            break;
+        // 3-2. 숫자 단독 매칭 (예: "사과 2")
+        if (!qty) {
+          const matchQty = segment.match(/(\d+)/);
+          if (matchQty) {
+            qty = parseInt(matchQty[1]);
           }
         }
+
+        // 3-3. 단위 단독 매칭 (예: "마리 주세요")
+        if (!qty) {
+          const matchUnit = segment.match(/(개|마리|봉지|팩|단|봉)/);
+          if (matchUnit) {
+            qty = 1;
+          }
+        }
+
+        // 3-4. 아무 정보도 없으면 기본 수량 1 적용 (예: "사과 주세요")
+        if (!qty) {
+          qty = 1;
+        }
+
+        // 해당 품목의 가격DB 리스트 참조
+        const list = priceDB[current.name];
+        if (!list) continue;
+        
+        const maxIdx = list.length - 1;
+        let price = 0;
+        let remain = qty;
+
+        // 단가 누적 로직 (maxIdx 이상인 수량은 maxIdx 단가로 누적)
+        while (remain > maxIdx) {
+          price += list[maxIdx];
+          remain -= maxIdx;
+        }
+        price += list[remain] || 0;
+
+        totalCombinedPrice += price;
+        matchedItems.push(`${current.name}(${qty})`);
       }
-
-      if (!qty) qty = 1;
-
-      const list = priceDB[item];
-      const maxIdx = list.length - 1;
-
-      let price = 0;
-
-      let remain = qty;
-
-      while (remain > maxIdx) {
-        price += list[maxIdx];
-        remain -= maxIdx;
-      }
-
-      price += list[remain] || 0;
 
       return {
-
-        item,
-        qty,
-        price
+        item: matchedItems.join(', '),
+        qty: null,
+        price: totalCombinedPrice
       };
     }
 
@@ -977,6 +1033,8 @@
     let liveSubtitle = '';
     let finalSummary = '';
     let speaking = false;
+    let isProcessed = false;
+    let lastFaceDetectedTime = Date.now();
 
     let speakingTimer = null;
 
@@ -1015,34 +1073,60 @@
           latest[0].transcript;
 
         liveSubtitle = transcript;
-
         speaking = true;
+        isProcessed = false;
 
         clearTimeout(speakingTimer);
 
+        // 침묵 감지 시간을 500ms로 크게 단축하여, 말이 멈추면 즉시 반응하도록 함
         speakingTimer = setTimeout(() => {
           speaking = false;
-        }, 1200);
 
-        if (!latest.isFinal) {
-          finalSummary = '';
-        } else {
-          finalSummary = summarize(transcript);
+          // 크롬 엔진이 완결을 주지 않았더라도, 500ms 정적이 유지되면 조기 완결 처리!
+          if (!isProcessed && transcript.trim()) {
+            isProcessed = true;
+            finalSummary = summarize(transcript);
 
-          // 1순위: DB 매핑
-          const p = lookupPrice(transcript);
-          if (p) showPrice(p);
+            // 1순위: DB 매핑 및 합산
+            const p = lookupPrice(transcript);
+            if (p) showPrice(p);
 
-          // 2순위: 직접 금액 발화 fallback
-          if (!p) {
-            const money =
-              parseKoreanMoney(transcript);
-
-            if (money) {
-              showPrice({
-                price: money
-              });
+            // 2순위: 직접 금액 발화 fallback
+            if (!p) {
+              const money = parseKoreanMoney(transcript);
+              if (money) {
+                showPrice({
+                  price: money
+                });
+              }
             }
+          }
+        }, 500);
+
+        // 크롬 브라우저 정식 완료(isFinal) 감지 시
+        if (latest.isFinal) {
+          if (!isProcessed) {
+            isProcessed = true;
+            finalSummary = summarize(transcript);
+
+            // 1순위: DB 매핑 및 합산
+            const p = lookupPrice(transcript);
+            if (p) showPrice(p);
+
+            // 2순위: 직접 금액 발화 fallback
+            if (!p) {
+              const money = parseKoreanMoney(transcript);
+              if (money) {
+                showPrice({
+                  price: money
+                });
+              }
+            }
+          }
+        } else {
+          // 말하고 있는 도중에는 머리 위 요약 지움 (단, 이미 조기완결이 난 경우가 아닐 때만)
+          if (!isProcessed) {
+            finalSummary = '';
           }
         }
       };
@@ -1076,6 +1160,13 @@
       size: 240
     };
 
+    let targetActiveFace = {
+
+      x: W / 2,
+      y: H / 2,
+      size: 240
+    };
+
     let otherFaces = [];
 
     // =========================================================
@@ -1097,29 +1188,13 @@
     faceMesh.onResults(results => {
 
       // =====================================================
-      // ORIGINAL VIDEO
-      // =====================================================
-
-      ctx.clearRect(0, 0, W, H);
-
-      ctx.save();
-
-      ctx.translate(W, 0);
-      ctx.scale(-1, 1);
-
-      ctx.drawImage(results.image, 0, 0, W, H);
-
-      ctx.restore();
-
-      // =====================================================
-      // FACE ANALYSIS
+      // FACE ANALYSIS (순수 좌표 데이터 갱신만 수행)
       // =====================================================
 
       let stats = [];
 
-      otherFaces = [];
-
-      if (results.multiFaceLandmarks) {
+      if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+        lastFaceDetectedTime = Date.now();
 
         results.multiFaceLandmarks.forEach((lm, i) => {
 
@@ -1285,268 +1360,31 @@
             s => s.id === lockedSpeakerId
           ) || best;
 
-        stats.forEach(s => {
-          if (s.id !== active.id) {
-            otherFaces.push(s);
-          }
-        });
+        // 다른 얼굴 목록 업데이트
+        otherFaces = stats.filter(s => s.id !== active.id).map(s => ({
+          id: s.id,
+          x: s.x,
+          y: s.y,
+          size: s.size
+        }));
 
-        activeFace.x +=
-          (active.x - activeFace.x) * 0.1;
+        // 타겟 활성 얼굴 좌표 업데이트
+        targetActiveFace.x = active.x;
+        targetActiveFace.y = active.y;
+        targetActiveFace.size = active.size;
 
-        activeFace.y +=
-          (active.y - activeFace.y) * 0.1;
-
-        activeFace.size +=
-          (active.size - activeFace.size) * 0.1;
-
-        // 🔧 추가: 사라진 얼굴 데이터 정리 (메모리 누수 방지)
+        // 사라진 얼굴 데이터 정리 (메모리 누수 방지)
         const activeIds = new Set(stats.map(s => s.id));
         for (const id in speakers) {
           if (!activeIds.has(id)) delete speakers[id];
         }
       } else {
-        // 🔧 얼굴이 감지되지 않을 때: 마스크를 점진적으로 제거
+        // 얼굴이 완전히 감지되지 않을 때
         otherFaces = [];
         lockedSpeakerId = null;
-        
-        // 얼굴 위치는 유지하되, 사이즈를 화면 밖으로 키워 블러를 없앰
-        activeFace.size += (W * 1.5 - activeFace.size) * 0.05;
       }
 
-      // =====================================================
-      // BLUR LAYER
-      // =====================================================
-
-      overlayCtx.clearRect(0, 0, W, H);
-
-      overlayCtx.save();
-
-      overlayCtx.translate(W, 0);
-      overlayCtx.scale(-1, 1);
-
-      overlayCtx.filter =
-        'blur(14px) saturate(0.9)';
-
-      overlayCtx.drawImage(
-        results.image,
-        0,
-        0,
-        W,
-        H
-      );
-
-      overlayCtx.restore();
-
-      overlayCtx.filter = 'none';
-
-      overlayCtx.globalAlpha = 0.32;
-
-      overlayCtx.drawImage(
-        noiseCanvas,
-        0,
-        0
-      );
-
-      overlayCtx.globalAlpha = 1;
-
-      // =====================================================
-      // DESTINATION OUT
-      // =====================================================
-
-      overlayCtx.globalCompositeOperation =
-        'destination-out';
-
-      // OTHER FACES (Level 2: 40~50% 선명도)
-
-      otherFaces.forEach(face => {
-
-        const r =
-          face.size * 1.2;
-
-        const g =
-          overlayCtx.createRadialGradient(
-
-            face.x,
-            face.y,
-            r * 0.1,
-
-            face.x,
-            face.y,
-            r
-          );
-
-        g.addColorStop(
-          0,
-          'rgba(0,0,0,0.45)'
-        );
-
-        g.addColorStop(
-          1,
-          'rgba(0,0,0,0)'
-        );
-
-        overlayCtx.fillStyle = g;
-
-        overlayCtx.fillRect(0, 0, W, H);
-      });
-
-      // ACTIVE FACE (Level 1: 거의 완전 선명)
-
-      const r =
-        activeFace.size * 1.6;
-
-      const hole =
-        overlayCtx.createRadialGradient(
-
-          activeFace.x,
-          activeFace.y,
-          r * 0.15,
-
-          activeFace.x,
-          activeFace.y,
-          r
-        );
-
-      hole.addColorStop(
-        0,
-        'rgba(0,0,0,1)'
-      );
-
-      hole.addColorStop(
-        0.6,
-        'rgba(0,0,0,0.7)'
-      );
-
-      hole.addColorStop(
-        1,
-        'rgba(0,0,0,0)'
-      );
-
-      overlayCtx.fillStyle = hole;
-
-      overlayCtx.fillRect(0, 0, W, H);
-
-      overlayCtx.globalCompositeOperation =
-        'source-over';
-
-      // =====================================================
-      // COMPOSITE
-      // =====================================================
-
-      ctx.drawImage(
-        overlayCanvas,
-        0,
-        0
-      );
-
-      // =====================================================
-      // EDGE VIGNETTE
-      // =====================================================
-
-      const edge =
-        ctx.createRadialGradient(
-
-          W / 2,
-          H / 2,
-          Math.min(W, H) * 0.4,
-
-          W / 2,
-          H / 2,
-          Math.max(W, H) * 0.9
-        );
-
-      edge.addColorStop(
-        0,
-        'rgba(0,0,0,0)'
-      );
-
-      edge.addColorStop(
-        1,
-        'rgba(0,0,0,0.38)'
-      );
-
-      ctx.fillStyle = edge;
-
-      ctx.fillRect(0, 0, W, H);
-
-      // =====================================================
-      // TEXT
-      // =====================================================
-
-      // -----------------------------------------------------
-      // 머리 위 요약 텍스트 페이딩 연산 및 드로잉 (더 은은하게)
-      // -----------------------------------------------------
-      if (finalSummary) {
-        renderSummaryText = finalSummary;
-        targetSummaryAlpha = 0.9;
-      } else {
-        targetSummaryAlpha = 0;
-      }
-
-      // 보간 속도를 0.04로 늦춰 매우 스무스하고 고급스러운 페이드아웃 효과 구현
-      currentSummaryAlpha += (targetSummaryAlpha - currentSummaryAlpha) * 0.04;
-
-      if (currentSummaryAlpha < 0.01 && targetSummaryAlpha === 0) {
-        renderSummaryText = '';
-        currentSummaryAlpha = 0;
-      }
-
-      if (renderSummaryText && currentSummaryAlpha > 0) {
-        ctx.font = '700 34px sans-serif';
-        ctx.textAlign = 'center';
-        
-        ctx.fillStyle = `rgba(255, 255, 255, ${currentSummaryAlpha})`;
-
-        // 그림자 강도를 은은하게 넓게 번지게 수정 (Blur 15로 증가, 투명도 조율)
-        ctx.shadowColor = `rgba(0, 0, 0, ${currentSummaryAlpha * 0.5})`;
-        ctx.shadowBlur = 15;
-
-        ctx.fillText(
-          renderSummaryText,
-          activeFace.x,
-          activeFace.y - activeFace.size * 0.9
-        );
-        
-        ctx.shadowBlur = 0;
-      }
-
-      // -----------------------------------------------------
-      // 턱 아래 풀 자막 페이딩 연산 및 드로잉 (더 은은하게)
-      // -----------------------------------------------------
-      if (liveSubtitle) {
-        renderSubtitleText = liveSubtitle;
-        targetSubtitleAlpha = 0.72;
-      } else {
-        targetSubtitleAlpha = 0;
-      }
-
-      // 보간 속도를 0.05로 늦춤
-      currentSubtitleAlpha += (targetSubtitleAlpha - currentSubtitleAlpha) * 0.05;
-
-      if (currentSubtitleAlpha < 0.01 && targetSubtitleAlpha === 0) {
-        renderSubtitleText = '';
-        currentSubtitleAlpha = 0;
-      }
-
-      if (renderSubtitleText && currentSubtitleAlpha > 0) {
-        ctx.font = '300 18px sans-serif';
-        ctx.textAlign = 'center';
-        
-        ctx.fillStyle = `rgba(255, 255, 255, ${currentSubtitleAlpha})`;
-
-        // 은은하고 부드러운 자막 그림자
-        ctx.shadowColor = `rgba(0, 0, 0, ${currentSubtitleAlpha * 0.4})`;
-        ctx.shadowBlur = 6;
-
-        ctx.fillText(
-          renderSubtitleText,
-          activeFace.x,
-          activeFace.y + activeFace.size * 0.82
-        );
-
-        ctx.shadowBlur = 0;
-      }
+      isAnalyzing = false; // 분석 완료에 따른 Throttling 락 해제
     });
 
     // =========================================================
@@ -1570,21 +1408,221 @@
       // 처음으로 버튼 노출
       homeBtn.classList.add('show');
 
-      // 전역 cam에 인스턴스 할당
-      cam = new Camera(video, {
+      // 사용기기 사양에 맞춰 최적의 화질을 동적으로 자동 선택하는 고화질 스트림 구동
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            width: { ideal: 1280 }, // 실시간 HUD 인터랙션에 최적화된 720p HD 해상도 선택
+            height: { ideal: 720 },
+            frameRate: { ideal: 60, max: 60 }, // 지원 기기에서 최대 60fps 획득 유도
+            facingMode: 'user' // 전면 카메라 지정
+          },
+          audio: false
+        });
 
-        onFrame: async () => {
+        video.srcObject = stream;
+        video.play();
 
-          await faceMesh.send({
-            image: video
-          });
-        },
+        let isCamRunning = true;
 
-        width: 1280,
-        height: 720
-      });
+        // 60fps 독립적 시네마틱 렌더 루프 및 비동기 머신 분석 송출
+        async function processFrame() {
+          if (!isCamRunning) return;
 
-      cam.start();
+          if (video.readyState === video.HAVE_ENOUGH_DATA) {
+            // [1] 원본 비디오를 메인 캔버스에 직접 60fps로 실시간 드로잉 (분석이 늦어져도 화면 멈춤 원천 해결)
+            ctx.clearRect(0, 0, W, H);
+            ctx.save();
+            ctx.translate(W, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0, W, H);
+            ctx.restore();
+
+            // [2] 얼굴이 끊긴 지 0.5초가 지나면 마스크 사이즈를 부드럽게 키워 블러 자동 제거
+            const timeSinceLastDetection = Date.now() - lastFaceDetectedTime;
+            if (timeSinceLastDetection > 500) {
+              otherFaces = [];
+              lockedSpeakerId = null;
+              targetActiveFace.size = W * 1.5;
+            }
+
+            // [3] 부드러운 Lerp 보간 계산 (60fps 기반으로 동작하므로 극도로 부드러움)
+            activeFace.x += (targetActiveFace.x - activeFace.x) * 0.1;
+            activeFace.y += (targetActiveFace.y - activeFace.y) * 0.1;
+            activeFace.size += (targetActiveFace.size - activeFace.size) * 0.05;
+
+            // [4] 백그라운드 overlayCanvas에 실시간 블러와 마스크 합성 수행
+            overlayCtx.clearRect(0, 0, W, H);
+            overlayCtx.save();
+            overlayCtx.translate(W, 0);
+            overlayCtx.scale(-1, 1);
+
+            // 크롬(native)과 사파리(SVG reference) 모두 호환되는 듀얼 블러 필터 적용
+            overlayCtx.filter = 'url(#canvasBlur) blur(14px) saturate(0.9)';
+            overlayCtx.drawImage(video, 0, 0, W, H);
+            overlayCtx.restore();
+            overlayCtx.filter = 'none';
+
+            // 노이즈 추가
+            overlayCtx.globalAlpha = 0.32;
+            overlayCtx.drawImage(noiseCanvas, 0, 0);
+            overlayCtx.globalAlpha = 1;
+
+            // 마스크 구멍 뚫기 (destination-out)
+            overlayCtx.globalCompositeOperation = 'destination-out';
+
+            // OTHER FACES (Level 2: 40~50% 선명도)
+            otherFaces.forEach(face => {
+              const r = face.size * 1.2;
+              const g = overlayCtx.createRadialGradient(
+                face.x,
+                face.y,
+                r * 0.1,
+                face.x,
+                face.y,
+                r
+              );
+              g.addColorStop(0, 'rgba(0,0,0,0.45)');
+              g.addColorStop(1, 'rgba(0,0,0,0)');
+              overlayCtx.fillStyle = g;
+              overlayCtx.fillRect(0, 0, W, H);
+            });
+
+            // ACTIVE FACE (Level 1: 거의 완전 선명)
+            const r = activeFace.size * 1.6;
+            const hole = overlayCtx.createRadialGradient(
+              activeFace.x,
+              activeFace.y,
+              r * 0.15,
+              activeFace.x,
+              activeFace.y,
+              r
+            );
+            hole.addColorStop(0, 'rgba(0,0,0,1)');
+            hole.addColorStop(0.6, 'rgba(0,0,0,0.7)');
+            hole.addColorStop(1, 'rgba(0,0,0,0)');
+
+            overlayCtx.fillStyle = hole;
+            overlayCtx.fillRect(0, 0, W, H);
+
+            overlayCtx.globalCompositeOperation = 'source-over';
+
+            // [5] 백그라운드 캔버스의 고화질 블러 레이어를 메인에 합성
+            ctx.drawImage(
+              overlayCanvas,
+              0,
+              0,
+              W,
+              H
+            );
+
+            // [6] 가장자리 다크 비네팅(EDGE VIGNETTE) 적용
+            const edge = ctx.createRadialGradient(
+              W / 2,
+              H / 2,
+              Math.min(W, H) * 0.4,
+              W / 2,
+              H / 2,
+              Math.max(W, H) * 0.9
+            );
+            edge.addColorStop(0, 'rgba(0,0,0,0)');
+            edge.addColorStop(1, 'rgba(0,0,0,0.38)');
+            ctx.fillStyle = edge;
+            ctx.fillRect(0, 0, W, H);
+
+            // [7] 머리 위 상품 정보 및 턱 아래 자막 페이딩(Lerp) 렌더링
+            // 7-1. 머리 위 요약 텍스트
+            if (finalSummary) {
+              renderSummaryText = finalSummary;
+              targetSummaryAlpha = 0.9;
+            } else {
+              targetSummaryAlpha = 0;
+            }
+            currentSummaryAlpha += (targetSummaryAlpha - currentSummaryAlpha) * 0.04;
+
+            if (currentSummaryAlpha < 0.01 && targetSummaryAlpha === 0) {
+              renderSummaryText = '';
+              currentSummaryAlpha = 0;
+            }
+            if (renderSummaryText && currentSummaryAlpha > 0) {
+              ctx.font = '700 34px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+              ctx.textAlign = 'center';
+              ctx.fillStyle = `rgba(255, 255, 255, ${currentSummaryAlpha})`;
+              ctx.shadowColor = `rgba(0, 0, 0, ${currentSummaryAlpha * 0.5})`;
+              ctx.shadowBlur = 15;
+              ctx.fillText(
+                renderSummaryText,
+                Math.round(activeFace.x),
+                Math.round(activeFace.y - activeFace.size * 0.9)
+              );
+              ctx.shadowBlur = 0;
+            }
+
+            // 7-2. 턱 아래 풀 자막 텍스트
+            if (liveSubtitle) {
+              renderSubtitleText = liveSubtitle;
+              targetSubtitleAlpha = 0.72;
+            } else {
+              targetSubtitleAlpha = 0;
+            }
+            currentSubtitleAlpha += (targetSubtitleAlpha - currentSubtitleAlpha) * 0.05;
+
+            if (currentSubtitleAlpha < 0.01 && targetSubtitleAlpha === 0) {
+              renderSubtitleText = '';
+              currentSubtitleAlpha = 0;
+            }
+            if (renderSubtitleText && currentSubtitleAlpha > 0) {
+              ctx.font = '300 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+              ctx.textAlign = 'center';
+              ctx.fillStyle = `rgba(255, 255, 255, ${currentSubtitleAlpha})`;
+              ctx.shadowColor = `rgba(0, 0, 0, ${currentSubtitleAlpha * 0.4})`;
+              ctx.shadowBlur = 6;
+              ctx.fillText(
+                renderSubtitleText,
+                Math.round(activeFace.x),
+                Math.round(activeFace.y + activeFace.size * 0.82)
+              );
+              ctx.shadowBlur = 0;
+            }
+
+            // [8] 미디어파이프 얼굴 메시 분석 비동기 요청 (분석용 초경량 캔버스 및 Throttling 락 적용)
+            const now = Date.now();
+            if (isAnalyzing && now - lastAnalysisTime > 300) {
+              isAnalyzing = false; // 세이프가드: 300ms 초과 시 강제 락 해제
+            }
+
+            if (!isAnalyzing) {
+              isAnalyzing = true;
+              lastAnalysisTime = now;
+
+              // 분석용 초경량 캔버스에 비디오 프레임을 480x270으로 축소 복사
+              analysisCtx.clearRect(0, 0, analysisCanvas.width, analysisCanvas.height);
+              analysisCtx.drawImage(video, 0, 0, analysisCanvas.width, analysisCanvas.height);
+
+              faceMesh.send({ image: analysisCanvas }).catch(err => {
+                console.error(err);
+                isAnalyzing = false;
+              });
+            }
+          }
+          requestAnimationFrame(processFrame);
+        }
+        processFrame();
+
+        // 처음으로 버튼 리셋 스펙 호환
+        cam = {
+          stop: () => {
+            isCamRunning = false;
+            const tracks = stream.getTracks();
+            tracks.forEach(track => track.stop());
+            video.srcObject = null;
+          }
+        };
+
+      } catch (err) {
+        alert("카메라 권한을 허용해 주세요!");
+        console.error(err);
+      }
     }
 
     document
