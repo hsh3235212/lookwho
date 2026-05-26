@@ -1458,7 +1458,7 @@
             overlayCtx.scale(-1, 1);
 
             // 크롬(native)과 사파리(SVG reference) 모두 호환되는 듀얼 블러 필터 적용
-            overlayCtx.filter = 'url(#canvasBlur) blur(14px) saturate(0.9)';
+            overlayCtx.filter = 'url(#canvasBlur)';
             overlayCtx.drawImage(video, 0, 0, W, H);
             overlayCtx.restore();
             overlayCtx.filter = 'none';
