@@ -1,0 +1,1888 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>Cinematic Active Speaker HUD</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: Pretendard, sans-serif;
+    }
+
+    video {
+      display: none;
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ===== START OVERLAY (Apple Style) ===== */
+
+    #startOverlay {
+      position: absolute;
+      inset: 0;
+      z-index: 999;
+
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+
+      background: #f5f5f7;
+
+      transition: opacity 0.4s ease;
+    }
+
+    .introTitle {
+      font-size: 56px;
+      font-weight: 900;
+      color: #1d1d1f;
+      letter-spacing: -0.5px;
+      margin-bottom: 14px;
+      text-align: center;
+    }
+
+    .introDesc {
+      font-size: 21px;
+      font-weight: 400;
+      color: #6e6e73;
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .btnGroup {
+      display: flex;
+      gap: 16px;
+    }
+
+    #startBtn {
+      padding: 0 32px;
+      height: 50px;
+
+      border: none;
+      border-radius: 980px;
+
+      background: #0071e3;
+      color: white;
+
+      font-size: 17px;
+      font-weight: 600;
+
+      cursor: pointer;
+
+      transition: background 0.2s;
+    }
+
+    #startBtn:hover {
+      background: #0077ed;
+    }
+
+    .infoBtn {
+      padding: 0 32px;
+      height: 50px;
+
+      border: 2px solid #0071e3;
+      border-radius: 980px;
+
+      background: transparent;
+      color: #0071e3;
+
+      font-size: 17px;
+      font-weight: 600;
+
+      cursor: pointer;
+
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .infoBtn:hover {
+      background: #0071e3;
+      color: white;
+    }
+
+    /* ===== ADMIN PANEL ===== */
+
+    #adminPanel {
+      position: absolute;
+      inset: 0;
+      z-index: 1000;
+      background: #f5f5f7;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+
+    #adminPanel.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .admin-header {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 48px 24px 0;
+    }
+
+    .admin-back {
+      background: none;
+      border: none;
+      color: #0071e3;
+      font-size: 17px;
+      font-weight: 400;
+      cursor: pointer;
+      padding: 0;
+      margin-bottom: 32px;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .admin-back:hover {
+      text-decoration: underline;
+    }
+
+    .admin-title {
+      font-size: 40px;
+      font-weight: 800;
+      color: #1d1d1f;
+      margin-bottom: 24px;
+    }
+
+    .admin-search {
+      width: 100%;
+      height: 48px;
+      border-radius: 12px;
+      border: 1px solid #d2d2d7;
+      background: #fff;
+      padding: 0 16px;
+      font-size: 17px;
+      color: #1d1d1f;
+      outline: none;
+      box-sizing: border-box;
+      transition: border-color 0.2s;
+    }
+
+    .admin-search:focus {
+      border-color: #0071e3;
+    }
+
+    .admin-search::placeholder {
+      color: #86868b;
+    }
+
+    .admin-body {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 32px 24px 120px;
+    }
+
+    .product-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px;
+    }
+
+    .product-card {
+      background: white;
+      border-radius: 18px;
+      padding: 16px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+      position: relative;
+      transition: all 0.3s ease;
+    }
+
+    .hover-reveal {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s ease;
+    }
+
+    .product-card:hover .hover-reveal {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    /* 개수 추가 버튼 세로 슬라이드 */
+    .slide-down {
+      max-height: 0;
+      margin-top: 0;
+      opacity: 0;
+      overflow: hidden;
+      transition: max-height 0.25s ease, margin-top 0.25s ease, opacity 0.2s ease;
+    }
+
+    .product-card:hover .slide-down {
+      max-height: 40px;
+      margin-top: 8px;
+      opacity: 1;
+    }
+
+    .tier-add-btn {
+      background: none;
+      border: 1px solid #d2d2d7;
+      border-radius: 8px;
+      padding: 4px 16px;
+      color: #0071e3;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+    }
+
+    .tier-add-btn:hover {
+      background: #0071e3;
+      color: white;
+      border-color: #0071e3;
+    }
+
+    /* 마이너스 버튼 슬라이드 효과 */
+    .slide-reveal {
+      display: inline-block;
+      max-width: 0;
+      margin-left: 0;
+      padding: 0;
+      opacity: 0;
+      overflow: hidden;
+      transition: max-width 0.25s ease, margin-left 0.25s ease, padding 0.25s ease, opacity 0.2s ease;
+    }
+
+    .price-row:hover .slide-reveal {
+      max-width: 24px;
+      margin-left: 8px;
+      padding: 0;
+      opacity: 1;
+    }
+
+    /* Apple iOS 설정 스타일 레드 마이너스 */
+    .red-minus {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #ff3b30;
+      border: 2px solid #ff3b30;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      box-sizing: border-box;
+      transition: background 0.2s ease;
+    }
+
+    .red-minus::after {
+      content: '';
+      width: 10px;
+      height: 2px;
+      background: white;
+      border-radius: 1px;
+      transition: background 0.2s ease;
+    }
+
+    .red-minus:hover {
+      background: white;
+    }
+
+    .red-minus:hover::after {
+      background: #ff3b30;
+    }
+
+    .product-name {
+      font-size: 21px;
+      font-weight: 700;
+      color: #1d1d1f;
+      margin-bottom: 16px;
+    }
+
+    .product-delete {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: none;
+      border: none;
+      color: #86868b;
+      font-size: 14px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 8px;
+      transition: all 0.2s;
+    }
+
+    .product-delete:hover {
+      background: none;
+      color: #0071e3;
+      text-decoration: underline;
+    }
+
+    @keyframes rowEnter {
+      from { opacity: 0; max-height: 0; transform: translateY(-8px); }
+      to { opacity: 1; max-height: 50px; transform: translateY(0); }
+    }
+
+    @keyframes rowExit {
+      from { opacity: 1; max-height: 50px; transform: translateY(0); }
+      to { opacity: 0; max-height: 0; transform: translateY(-8px); }
+    }
+
+    .row-enter {
+      animation: rowEnter 0.25s ease forwards;
+    }
+
+    .row-exit {
+      animation: rowExit 0.2s ease forwards;
+    }
+
+    .price-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 0;
+      border-bottom: 1px solid #f5f5f7;
+    }
+
+    .price-row:last-child {
+      border-bottom: none;
+    }
+
+    .price-label {
+      font-size: 15px;
+      color: #6e6e73;
+      font-weight: 500;
+    }
+
+    .price-input {
+      width: 90px;
+      height: 32px;
+      border: 1px solid #d2d2d7;
+      border-radius: 8px;
+      text-align: right;
+      padding: 0 10px;
+      font-size: 15px;
+      color: #1d1d1f;
+      background: #f5f5f7;
+      outline: none;
+      transition: border-color 0.2s, background 0.2s;
+      -moz-appearance: textfield;
+    }
+
+    .price-input::-webkit-outer-spin-button,
+    .price-input::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+
+    .price-input:focus {
+      border-color: #0071e3;
+      background: #fff;
+    }
+
+    /* 상품 추가 카드 */
+    .add-card {
+      background: #fff;
+      border: 2px dashed #d2d2d7;
+      border-radius: 18px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 180px;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .add-card:hover {
+      border-color: #0071e3;
+      background: rgba(0, 113, 227, 0.04);
+    }
+
+    .add-card-icon {
+      font-size: 36px;
+      color: #0071e3;
+      margin-bottom: 8px;
+      font-weight: 300;
+    }
+
+    .add-card-text {
+      font-size: 17px;
+      color: #0071e3;
+      font-weight: 500;
+    }
+
+    /* 추가 폼 */
+    .add-form {
+      background: #fff;
+      border-radius: 18px;
+      padding: 24px;
+      display: none;
+    }
+
+    .add-form.show {
+      display: block;
+    }
+
+    .add-form-title {
+      font-size: 17px;
+      font-weight: 700;
+      color: #1d1d1f;
+      margin-bottom: 16px;
+    }
+
+    .form-input {
+      width: 100%;
+      height: 40px;
+      border: 1px solid #d2d2d7;
+      border-radius: 10px;
+      padding: 0 12px;
+      font-size: 15px;
+      color: #1d1d1f;
+      outline: none;
+      box-sizing: border-box;
+      margin-bottom: 10px;
+      transition: border-color 0.2s;
+    }
+
+    .form-input:focus {
+      border-color: #0071e3;
+    }
+
+    .form-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .form-save {
+      flex: 1;
+      height: 40px;
+      border: none;
+      border-radius: 10px;
+      background: #0071e3;
+      color: white;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .form-save:hover {
+      background: #0077ed;
+    }
+
+    .form-cancel {
+      flex: 1;
+      height: 40px;
+      border: 1px solid #d2d2d7;
+      border-radius: 10px;
+      background: #fff;
+      color: #1d1d1f;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .form-cancel:hover {
+      background: #f5f5f7;
+    }
+
+    /* ===== PRICE ===== */
+
+    #priceIndicator {
+
+      position: absolute;
+
+      bottom: 40px;
+      right: 40px;
+
+      transform:
+        translateY(15px) scale(0.96);
+
+      z-index: 100;
+
+      padding:
+        16px 36px;
+
+      border-radius: 18px;
+
+      background:
+        rgba(0, 0, 0, 0.42);
+
+      border:
+        1px solid rgba(255, 255, 255, 0.08);
+
+      backdrop-filter: blur(14px);
+
+      color: white;
+
+      font-size: 34px;
+      font-weight: 800;
+
+      letter-spacing: 2px;
+
+      opacity: 0;
+
+      transition:
+        0.55s cubic-bezier(.16, 1, .3, 1);
+
+      pointer-events: none;
+    }
+
+    #priceIndicator.show {
+
+      opacity: 1;
+
+      transform:
+        translateY(0) scale(1);
+    }
+
+    @media (max-width: 600px) {
+      .introTitle {
+        font-size: 36px;
+      }
+
+      .introDesc {
+        font-size: 17px;
+      }
+
+      .admin-title {
+        font-size: 28px;
+      }
+
+      .product-grid {
+        grid-template-columns: 1fr;
+      }
+
+      #priceIndicator {
+        bottom: 24px;
+        right: 24px;
+        font-size: 24px;
+        padding: 12px 24px;
+      }
+
+      #homeBtn {
+        top: 16px;
+        left: 16px;
+        font-size: 15px;
+      }
+    }
+
+    #homeBtn {
+      position: absolute;
+      top: 24px;
+      left: 24px;
+      z-index: 90;
+
+      background: none;
+      border: none;
+      color: #ffffff;
+      font-size: 17px;
+      font-weight: 400;
+      cursor: pointer;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s cubic-bezier(.2, .8, .2, 1);
+    }
+
+    #homeBtn:hover {
+      text-decoration: underline;
+    }
+
+    #homeBtn.show {
+      opacity: 1;
+      pointer-events: auto;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- 처음으로 돌아가기 버튼 -->
+  <button id="homeBtn">← 처음으로</button>
+
+  <video id="video" autoplay playsinline></video>
+
+  <canvas id="canvas"></canvas>
+
+  <div id="priceIndicator">₩ 0</div>
+
+  <!-- Admin Panel -->
+  <div id="adminPanel">
+    <div class="admin-header">
+      <button class="admin-back" id="adminBack">← 돌아가기</button>
+      <div class="admin-title">가격 관리</div>
+      <input class="admin-search" type="text" id="adminSearch" placeholder="제품 검색">
+    </div>
+    <div class="admin-body" id="adminBody"></div>
+  </div>
+
+  <div id="startOverlay">
+
+    <div class="introTitle">
+      LookWho
+    </div>
+
+    <div class="introDesc">
+      완벽한 몰입. 더 깊은 대화
+    </div>
+
+    <div class="btnGroup">
+      <button id="startBtn">
+        시작하기
+      </button>
+      <button class="infoBtn" id="adminBtn">
+        가격 수정
+      </button>
+    </div>
+
+  </div>
+
+  <script>
+
+    // =========================================================
+    // BASIC
+    // =========================================================
+
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    const priceIndicator = document.getElementById('priceIndicator');
+    const homeBtn = document.getElementById('homeBtn');
+
+    let cam = null;
+
+    let W = innerWidth;
+    let H = innerHeight;
+
+    canvas.width = W;
+    canvas.height = H;
+
+    // =========================================================
+    // OVERLAY CANVAS
+    // =========================================================
+
+    const overlayCanvas = document.createElement('canvas');
+    const overlayCtx = overlayCanvas.getContext('2d');
+
+    overlayCanvas.width = W;
+    overlayCanvas.height = H;
+
+    // =========================================================
+    // NOISE
+    // =========================================================
+
+    const noiseCanvas = document.createElement('canvas');
+    const nctx = noiseCanvas.getContext('2d');
+
+    noiseCanvas.width = W;
+    noiseCanvas.height = H;
+
+    function generateNoise() {
+
+      const img = nctx.createImageData(W, H);
+
+      for (let i = 0; i < img.data.length; i += 4) {
+        const v = Math.random() * 255;
+        img.data[i] = v;
+        img.data[i + 1] = v;
+        img.data[i + 2] = v;
+        img.data[i + 3] = 32;
+      }
+
+      nctx.putImageData(img, 0, 0);
+    }
+
+    generateNoise();
+
+    // =========================================================
+    // PRICE DATABASE (localStorage 연동)
+    // =========================================================
+
+    const defaultDB = {
+      "광어": [0, 35000, 68000, 99000, 128000, 155000],
+      "우럭": [0, 22000, 42000, 61000, 79000, 95000],
+      "사과": [0, 2500, 4800, 7000, 9000, 10500],
+      "깻잎": [0, 1000, 1900, 2700, 3500, 4200],
+      "옥수수": [0, 2000, 3800, 5500, 7000, 8500],
+      "당근": [0, 1500, 2800, 4000, 5000, 6000]
+    };
+
+    let priceDB = JSON.parse(localStorage.getItem('priceDB')) || JSON.parse(JSON.stringify(defaultDB));
+
+    function saveDB() {
+      localStorage.setItem('priceDB', JSON.stringify(priceDB));
+    }
+
+    const quantityMap = {
+
+      '한': 1, '하나': 1,
+      '두': 2, '둘': 2,
+      '세': 3, '셋': 3,
+      '네': 4, '넷': 4,
+      '다섯': 5,
+      '여섯': 6,
+      '일곱': 7,
+      '여덟': 8,
+      '아홉': 9,
+      '열': 10
+    };
+
+    // =========================================================
+    // MONEY PARSER (DB 미등록 품목 fallback용)
+    // =========================================================
+
+    function parseKoreanMoney(text) {
+
+      const map = {
+        '일': 1, '이': 2, '삼': 3, '사': 4, '오': 5,
+        '육': 6, '칠': 7, '팔': 8, '구': 9
+      };
+
+      let total = 0;
+
+      const man = text.match(/([일이삼사오육칠팔구]?)[만]/);
+
+      if (man) {
+        const n = map[man[1]] || 1;
+        total += n * 10000;
+      }
+
+      const thousand = text.match(/([일이삼사오육칠팔구]?)[천]/);
+
+      if (thousand) {
+        total += (map[thousand[1]] || 1) * 1000;
+      }
+
+      return total || null;
+    }
+
+    // =========================================================
+    // PRICE LOOKUP
+    // =========================================================
+
+    function lookupPrice(text) {
+
+      if (!text) return null;
+
+      let item = null;
+      let qty = null;
+
+      for (const key of Object.keys(priceDB)) {
+
+        if (text.includes(key)) {
+
+          item = key;
+          break;
+        }
+      }
+
+      if (!item) return null;
+
+      const numeric = text.match(/(\d+)\s*(개|마리|봉지|팩|단|봉)/);
+
+      if (numeric) {
+
+        qty = parseInt(numeric[1]);
+      }
+
+      if (!qty) {
+
+        for (const [word, num] of Object.entries(quantityMap)) {
+
+          const re = new RegExp(word + '\\s*(개|마리|봉지|팩|단|봉)');
+
+          if (re.test(text)) {
+            qty = num;
+            break;
+          }
+        }
+      }
+
+      if (!qty) qty = 1;
+
+      const list = priceDB[item];
+      const maxIdx = list.length - 1;
+
+      let price = 0;
+
+      let remain = qty;
+
+      while (remain > maxIdx) {
+        price += list[maxIdx];
+        remain -= maxIdx;
+      }
+
+      price += list[remain] || 0;
+
+      return {
+
+        item,
+        qty,
+        price
+      };
+    }
+
+    // =========================================================
+    // PRICE UI
+    // =========================================================
+
+    let priceTimer = null;
+    let lastPrice = null;
+
+    function showPrice(v) {
+
+      if (!v) return;
+
+      if (lastPrice === v.price) return;
+
+      clearTimeout(priceTimer);
+
+      // 이미 가격 팝업이 표시 중인 경우, 사라지는 트랜지션을 먼저 수행한 후 새 가격으로 노출
+      if (priceIndicator.classList.contains('show')) {
+        priceIndicator.classList.remove('show');
+
+        setTimeout(() => {
+          lastPrice = v.price;
+          priceIndicator.innerText = '₩ ' + v.price.toLocaleString();
+          priceIndicator.classList.add('show');
+        }, 550); // CSS transition 0.55s 타이밍과 매칭
+      } else {
+        // 처음 나타날 때
+        lastPrice = v.price;
+        priceIndicator.innerText = '₩ ' + v.price.toLocaleString();
+        priceIndicator.classList.add('show');
+      }
+
+      priceTimer = setTimeout(() => {
+
+        priceIndicator.classList.remove('show');
+        
+        // 가격이 사라질 때 머리 위 정보(요약 단어)도 동시에 클리어하여 연동시킴
+        finalSummary = '';
+
+        setTimeout(() => {
+          lastPrice = null;
+        }, 550);
+      }, 7000); // 표시 시간 3초에서 4초 연장하여 총 7초(7000ms) 유지
+    }
+
+    // =========================================================
+    // SUMMARY (🔧 버그 수정: 단어 내부 글자 보존)
+    // =========================================================
+
+    function summarize(text) {
+      if (!text) return '';
+
+      // 1. 텍스트 앞뒤 공백 패딩
+      let t = ' ' + text + ' ';
+
+      // 2. 불필요한 필러 및 요청어 제거
+      const fillers = ["그러니까", "저기", "약간", "좀", "어", "음", "그", "아", "혹시"];
+      fillers.forEach(f => {
+        t = t.replace(new RegExp(`(?<=\\s)${f}(?=\\s)`, 'g'), ' ');
+      });
+      t = t.replace(/(주세요|주실래요|부탁해요|주십시오|할게요|할까요)/g, '');
+
+      // 3. 등록된 상품명 배열 추출 (priceDB 기준)
+      const registeredProducts = Object.keys(priceDB);
+
+      // 4. 발화 텍스트 내에서 등록 상품 검색 및 등장 위치 기록
+      let foundProducts = [];
+      registeredProducts.forEach(prod => {
+        const idx = t.indexOf(prod);
+        if (idx !== -1) {
+          foundProducts.push({ name: prod, index: idx });
+        }
+      });
+
+      // 등록된 상품명이 포함되지 않은 경우 아무것도 출력하지 않음
+      if (foundProducts.length === 0) {
+        return '';
+      }
+
+      // 등장 인덱스 오름차순 정렬 (발화 순서 유지)
+      foundProducts.sort((a, b) => a.index - b.index);
+
+      let results = [];
+
+      // 5. 각 상품명 뒤의 텍스트 영역(세그먼트)을 파싱하여 수량/단위 추출
+      for (let i = 0; i < foundProducts.length; i++) {
+        const current = foundProducts[i];
+        const startIdx = current.index + current.name.length;
+        const endIdx = (i < foundProducts.length - 1) ? foundProducts[i + 1].index : t.length;
+        let segment = t.substring(startIdx, endIdx).trim();
+
+        // 세그먼트 내 한글 수사를 숫자로 변환
+        for (const [k, v] of Object.entries(quantityMap)) {
+          segment = segment.replace(new RegExp(k + '(?=\\s*(개|마리|봉지|팩|단|봉|\\s|$))', 'g'), v);
+        }
+
+        // 5-1. 숫자 + 단위 형태 추출
+        const matchQtyUnit = segment.match(/(\d+)\s*(개|마리|봉지|팩|단|봉)/);
+        if (matchQtyUnit) {
+          results.push(`${current.name} ${matchQtyUnit[1]}${matchQtyUnit[2]}`);
+          continue;
+        }
+
+        // 5-2. 숫자 단독 추출
+        const matchQty = segment.match(/(\d+)/);
+        if (matchQty) {
+          results.push(`${current.name} ${matchQty[1]}`);
+          continue;
+        }
+
+        // 5-3. 단위 단독 추출 (숫자 없이 단위만 온 경우 1로 처리)
+        const matchUnit = segment.match(/(개|마리|봉지|팩|단|봉)/);
+        if (matchUnit) {
+          results.push(`${current.name} 1${matchUnit[1]}`);
+          continue;
+        }
+
+        // 5-4. 수량/단위 정보가 없는 경우 상품명 단독 반환 (새로운 정보 추측/생성 방지)
+        results.push(current.name);
+      }
+
+      // 6. 여러 상품이면 " / "로 구분하여 반환
+      return results.join(' / ');
+    }
+
+    // =========================================================
+    // STT
+    // =========================================================
+
+    let transcript = '';
+    let liveSubtitle = '';
+    let finalSummary = '';
+    let speaking = false;
+
+    let speakingTimer = null;
+
+    // 캔버스 텍스트 페이딩(Fade-in / Fade-out) 상태 변수
+    let currentSummaryAlpha = 0;
+    let targetSummaryAlpha = 0;
+    let renderSummaryText = '';
+
+    let currentSubtitleAlpha = 0;
+    let targetSubtitleAlpha = 0;
+    let renderSubtitleText = '';
+
+    const SR =
+      window.SpeechRecognition ||
+      window.webkitSpeechRecognition;
+
+    let recognition = null;
+
+    function initSTT() {
+
+      if (!SR) return;
+
+      recognition = new SR();
+
+      recognition.lang = 'ko-KR';
+
+      recognition.continuous = true;
+      recognition.interimResults = true;
+
+      recognition.onresult = e => {
+
+        const latest =
+          e.results[e.results.length - 1];
+
+        transcript =
+          latest[0].transcript;
+
+        liveSubtitle = transcript;
+
+        speaking = true;
+
+        clearTimeout(speakingTimer);
+
+        speakingTimer = setTimeout(() => {
+          speaking = false;
+        }, 1200);
+
+        if (!latest.isFinal) {
+          finalSummary = '';
+        } else {
+          finalSummary = summarize(transcript);
+
+          // 1순위: DB 매핑
+          const p = lookupPrice(transcript);
+          if (p) showPrice(p);
+
+          // 2순위: 직접 금액 발화 fallback
+          if (!p) {
+            const money =
+              parseKoreanMoney(transcript);
+
+            if (money) {
+              showPrice({
+                price: money
+              });
+            }
+          }
+        }
+      };
+
+      recognition.onend = () => {
+        try {
+          recognition.start();
+        } catch (e) { }
+      };
+
+      recognition.start();
+    }
+
+    // =========================================================
+    // SPEAKER TRACKING
+    // =========================================================
+
+    let speakers = {};
+
+    let lockedSpeakerId = null;
+
+    let lockFrame = 0;
+
+    const LOCK_MIN = 20;
+    const LOCK_THRESHOLD = 0.4;
+
+    let activeFace = {
+
+      x: W / 2,
+      y: H / 2,
+      size: 240
+    };
+
+    let otherFaces = [];
+
+    // =========================================================
+    // FACEMESH
+    // =========================================================
+
+    const faceMesh = new FaceMesh({
+
+      locateFile: f =>
+        `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
+    });
+
+    faceMesh.setOptions({
+
+      maxNumFaces: 4,
+      refineLandmarks: true
+    });
+
+    faceMesh.onResults(results => {
+
+      // =====================================================
+      // ORIGINAL VIDEO
+      // =====================================================
+
+      ctx.clearRect(0, 0, W, H);
+
+      ctx.save();
+
+      ctx.translate(W, 0);
+      ctx.scale(-1, 1);
+
+      ctx.drawImage(results.image, 0, 0, W, H);
+
+      ctx.restore();
+
+      // =====================================================
+      // FACE ANALYSIS
+      // =====================================================
+
+      let stats = [];
+
+      otherFaces = [];
+
+      if (results.multiFaceLandmarks) {
+
+        results.multiFaceLandmarks.forEach((lm, i) => {
+
+          const top = lm[13];
+          const bottom = lm[14];
+
+          const left = lm[78];
+          const right = lm[308];
+
+          const dy = top.y - bottom.y;
+          const dx = top.x - bottom.x;
+
+          const amp =
+            Math.sqrt(dx * dx + dy * dy);
+
+          const mw =
+            Math.sqrt(
+              Math.pow(left.x - right.x, 2) +
+              Math.pow(left.y - right.y, 2)
+            );
+
+          const norm =
+            amp / (mw + 0.001);
+
+          let minX = 1, maxX = 0, minY = 1, maxY = 0;
+
+          lm.forEach(p => {
+            minX = Math.min(minX, p.x);
+            maxX = Math.max(maxX, p.x);
+
+            minY = Math.min(minY, p.y);
+            maxY = Math.max(maxY, p.y);
+          });
+
+          const cx =
+            W - ((minX + maxX) / 2) * W;
+
+          const cy =
+            ((minY + maxY) / 2) * H;
+
+          const size =
+            (maxX - minX) * W;
+
+          let id = null;
+
+          let best = 0.1 * W;
+
+          for (const [sid, s] of Object.entries(speakers)) {
+
+            const d =
+              Math.hypot(
+                s.x - cx,
+                s.y - cy
+              );
+
+            if (d < best) {
+
+              best = d;
+              id = sid;
+            }
+          }
+
+          if (!id) {
+            id =
+              'f_' + Date.now() + '_' + i;
+          }
+
+          if (!speakers[id]) {
+            speakers[id] = {
+
+              x: cx,
+              y: cy,
+
+              last: norm,
+
+              velocity: 0,
+
+              history: []
+            };
+          }
+
+          const sp = speakers[id];
+
+          // 위치 업데이트
+          sp.x = cx;
+          sp.y = cy;
+
+          sp.velocity =
+            Math.abs(norm - sp.last);
+
+          sp.last = norm;
+
+          sp.history.push(norm);
+
+          if (sp.history.length > 30) {
+            sp.history.shift();
+          }
+
+          let freq = 0;
+
+          for (let j = 2; j < sp.history.length; j++) {
+
+            const d1 =
+              sp.history[j - 1] -
+              sp.history[j - 2];
+
+            const d2 =
+              sp.history[j] -
+              sp.history[j - 1];
+
+            if (d1 * d2 < 0 &&
+              Math.abs(d1) > 0.015) {
+              freq++;
+            }
+          }
+
+          const score =
+            norm * 1.0 +
+            freq * 0.3 +
+            sp.velocity * 2.0;
+
+          stats.push({
+            id,
+            score,
+            x: cx,
+            y: cy,
+            size
+          });
+        });
+
+        stats.sort((a, b) => b.score - a.score);
+
+        const best = stats[0];
+
+        lockFrame++;
+
+        if (!lockedSpeakerId) {
+          lockedSpeakerId = best.id;
+        }
+
+        else if (
+          lockedSpeakerId !== best.id &&
+          lockFrame > LOCK_MIN
+        ) {
+
+          const current =
+            stats.find(
+              s => s.id === lockedSpeakerId
+            );
+
+          const currentScore =
+            current ? current.score : 0;
+
+          if (best.score >
+            currentScore + LOCK_THRESHOLD) {
+            lockedSpeakerId = best.id;
+            lockFrame = 0;
+          }
+        }
+
+        const active =
+          stats.find(
+            s => s.id === lockedSpeakerId
+          ) || best;
+
+        stats.forEach(s => {
+          if (s.id !== active.id) {
+            otherFaces.push(s);
+          }
+        });
+
+        activeFace.x +=
+          (active.x - activeFace.x) * 0.1;
+
+        activeFace.y +=
+          (active.y - activeFace.y) * 0.1;
+
+        activeFace.size +=
+          (active.size - activeFace.size) * 0.1;
+
+        // 🔧 추가: 사라진 얼굴 데이터 정리 (메모리 누수 방지)
+        const activeIds = new Set(stats.map(s => s.id));
+        for (const id in speakers) {
+          if (!activeIds.has(id)) delete speakers[id];
+        }
+      } else {
+        // 🔧 얼굴이 감지되지 않을 때: 마스크를 점진적으로 제거
+        otherFaces = [];
+        lockedSpeakerId = null;
+        
+        // 얼굴 위치는 유지하되, 사이즈를 화면 밖으로 키워 블러를 없앰
+        activeFace.size += (W * 1.5 - activeFace.size) * 0.05;
+      }
+
+      // =====================================================
+      // BLUR LAYER
+      // =====================================================
+
+      overlayCtx.clearRect(0, 0, W, H);
+
+      overlayCtx.save();
+
+      overlayCtx.translate(W, 0);
+      overlayCtx.scale(-1, 1);
+
+      overlayCtx.filter =
+        'blur(14px) saturate(0.9)';
+
+      overlayCtx.drawImage(
+        results.image,
+        0,
+        0,
+        W,
+        H
+      );
+
+      overlayCtx.restore();
+
+      overlayCtx.filter = 'none';
+
+      overlayCtx.globalAlpha = 0.32;
+
+      overlayCtx.drawImage(
+        noiseCanvas,
+        0,
+        0
+      );
+
+      overlayCtx.globalAlpha = 1;
+
+      // =====================================================
+      // DESTINATION OUT
+      // =====================================================
+
+      overlayCtx.globalCompositeOperation =
+        'destination-out';
+
+      // OTHER FACES (Level 2: 40~50% 선명도)
+
+      otherFaces.forEach(face => {
+
+        const r =
+          face.size * 1.2;
+
+        const g =
+          overlayCtx.createRadialGradient(
+
+            face.x,
+            face.y,
+            r * 0.1,
+
+            face.x,
+            face.y,
+            r
+          );
+
+        g.addColorStop(
+          0,
+          'rgba(0,0,0,0.45)'
+        );
+
+        g.addColorStop(
+          1,
+          'rgba(0,0,0,0)'
+        );
+
+        overlayCtx.fillStyle = g;
+
+        overlayCtx.fillRect(0, 0, W, H);
+      });
+
+      // ACTIVE FACE (Level 1: 거의 완전 선명)
+
+      const r =
+        activeFace.size * 1.6;
+
+      const hole =
+        overlayCtx.createRadialGradient(
+
+          activeFace.x,
+          activeFace.y,
+          r * 0.15,
+
+          activeFace.x,
+          activeFace.y,
+          r
+        );
+
+      hole.addColorStop(
+        0,
+        'rgba(0,0,0,1)'
+      );
+
+      hole.addColorStop(
+        0.6,
+        'rgba(0,0,0,0.7)'
+      );
+
+      hole.addColorStop(
+        1,
+        'rgba(0,0,0,0)'
+      );
+
+      overlayCtx.fillStyle = hole;
+
+      overlayCtx.fillRect(0, 0, W, H);
+
+      overlayCtx.globalCompositeOperation =
+        'source-over';
+
+      // =====================================================
+      // COMPOSITE
+      // =====================================================
+
+      ctx.drawImage(
+        overlayCanvas,
+        0,
+        0
+      );
+
+      // =====================================================
+      // EDGE VIGNETTE
+      // =====================================================
+
+      const edge =
+        ctx.createRadialGradient(
+
+          W / 2,
+          H / 2,
+          Math.min(W, H) * 0.4,
+
+          W / 2,
+          H / 2,
+          Math.max(W, H) * 0.9
+        );
+
+      edge.addColorStop(
+        0,
+        'rgba(0,0,0,0)'
+      );
+
+      edge.addColorStop(
+        1,
+        'rgba(0,0,0,0.38)'
+      );
+
+      ctx.fillStyle = edge;
+
+      ctx.fillRect(0, 0, W, H);
+
+      // =====================================================
+      // TEXT
+      // =====================================================
+
+      // -----------------------------------------------------
+      // 머리 위 요약 텍스트 페이딩 연산 및 드로잉 (더 은은하게)
+      // -----------------------------------------------------
+      if (finalSummary) {
+        renderSummaryText = finalSummary;
+        targetSummaryAlpha = 0.9;
+      } else {
+        targetSummaryAlpha = 0;
+      }
+
+      // 보간 속도를 0.04로 늦춰 매우 스무스하고 고급스러운 페이드아웃 효과 구현
+      currentSummaryAlpha += (targetSummaryAlpha - currentSummaryAlpha) * 0.04;
+
+      if (currentSummaryAlpha < 0.01 && targetSummaryAlpha === 0) {
+        renderSummaryText = '';
+        currentSummaryAlpha = 0;
+      }
+
+      if (renderSummaryText && currentSummaryAlpha > 0) {
+        ctx.font = '700 34px sans-serif';
+        ctx.textAlign = 'center';
+        
+        ctx.fillStyle = `rgba(255, 255, 255, ${currentSummaryAlpha})`;
+
+        // 그림자 강도를 은은하게 넓게 번지게 수정 (Blur 15로 증가, 투명도 조율)
+        ctx.shadowColor = `rgba(0, 0, 0, ${currentSummaryAlpha * 0.5})`;
+        ctx.shadowBlur = 15;
+
+        ctx.fillText(
+          renderSummaryText,
+          activeFace.x,
+          activeFace.y - activeFace.size * 0.9
+        );
+        
+        ctx.shadowBlur = 0;
+      }
+
+      // -----------------------------------------------------
+      // 턱 아래 풀 자막 페이딩 연산 및 드로잉 (더 은은하게)
+      // -----------------------------------------------------
+      if (liveSubtitle) {
+        renderSubtitleText = liveSubtitle;
+        targetSubtitleAlpha = 0.72;
+      } else {
+        targetSubtitleAlpha = 0;
+      }
+
+      // 보간 속도를 0.05로 늦춤
+      currentSubtitleAlpha += (targetSubtitleAlpha - currentSubtitleAlpha) * 0.05;
+
+      if (currentSubtitleAlpha < 0.01 && targetSubtitleAlpha === 0) {
+        renderSubtitleText = '';
+        currentSubtitleAlpha = 0;
+      }
+
+      if (renderSubtitleText && currentSubtitleAlpha > 0) {
+        ctx.font = '300 18px sans-serif';
+        ctx.textAlign = 'center';
+        
+        ctx.fillStyle = `rgba(255, 255, 255, ${currentSubtitleAlpha})`;
+
+        // 은은하고 부드러운 자막 그림자
+        ctx.shadowColor = `rgba(0, 0, 0, ${currentSubtitleAlpha * 0.4})`;
+        ctx.shadowBlur = 6;
+
+        ctx.fillText(
+          renderSubtitleText,
+          activeFace.x,
+          activeFace.y + activeFace.size * 0.82
+        );
+
+        ctx.shadowBlur = 0;
+      }
+    });
+
+    // =========================================================
+    // START
+    // =========================================================
+
+    async function start() {
+
+      document.getElementById(
+        'startOverlay'
+      ).style.opacity = 0;
+
+      setTimeout(() => {
+        document.getElementById(
+          'startOverlay'
+        ).style.display = 'none';
+      }, 400);
+
+      initSTT();
+
+      // 처음으로 버튼 노출
+      homeBtn.classList.add('show');
+
+      // 전역 cam에 인스턴스 할당
+      cam = new Camera(video, {
+
+        onFrame: async () => {
+
+          await faceMesh.send({
+            image: video
+          });
+        },
+
+        width: 1280,
+        height: 720
+      });
+
+      cam.start();
+    }
+
+    document
+      .getElementById('startBtn')
+      .onclick = start;
+
+    // 처음으로 버튼 클릭 핸들러
+    homeBtn.onclick = () => {
+      // 1. 카메라 정지 및 인스턴스 초기화
+      if (cam) {
+        cam.stop();
+        cam = null;
+      }
+
+      // 2. STT 중지 및 리스너 제거
+      if (recognition) {
+        recognition.stop();
+        recognition = null;
+      }
+
+      // 3. 캔버스 초기화
+      ctx.clearRect(0, 0, W, H);
+
+      // 4. 가격 인디케이터 숨김 및 상태 초기화
+      priceIndicator.classList.remove('show');
+      lastPrice = null;
+      transcript = '';
+      liveSubtitle = '';
+      finalSummary = '';
+
+      // 5. 처음으로 버튼 숨김
+      homeBtn.classList.remove('show');
+
+      // 6. 시작 Overlay 원복
+      const startOverlay = document.getElementById('startOverlay');
+      startOverlay.style.display = 'flex';
+      setTimeout(() => {
+        startOverlay.style.opacity = 1;
+      }, 50);
+    };
+
+    // =========================================================
+    // ADMIN PANEL
+    // =========================================================
+
+    const adminPanel = document.getElementById('adminPanel');
+    const adminBody = document.getElementById('adminBody');
+    const adminSearch = document.getElementById('adminSearch');
+
+    // 패널 열기/닫기
+    document.getElementById('adminBtn').onclick = () => {
+      renderAdmin();
+      adminPanel.classList.add('show');
+    };
+
+    document.getElementById('adminBack').onclick = () => {
+      adminPanel.classList.remove('show');
+    };
+
+    // 검색 필터
+    adminSearch.oninput = () => renderAdmin();
+
+    // Admin 패널 렌더링
+    function renderAdmin() {
+      const query = adminSearch.value.trim();
+      const keys = Object.keys(priceDB).filter(k =>
+        !query || k.includes(query)
+      );
+
+      let html = '<div class="product-grid">';
+
+      // 상품 카드
+      keys.forEach(name => {
+        const list = priceDB[name];
+        const count = list.length - 1; // index 0은 더미
+        html += `<div class="product-card">`;
+        html += `<div class="product-name">${name}</div>`;
+        html += `<button class="product-delete" onclick="deleteProduct('${name}')">삭제</button>`;
+
+        for (let i = 1; i <= count; i++) {
+          const val = list[i] !== undefined ? list[i] : 0;
+          const formatted = val > 0 ? val.toLocaleString() + '원' : '';
+          html += `<div class="price-row">`;
+          html += `<span class="price-label">${i}개</span>`;
+          html += `<div style="display:flex;align-items:center">`;
+          html += `<input class="price-input" type="text" inputmode="numeric" value="${formatted}" placeholder="(단위: 원)"
+            oninput="formatAndUpdate(this, '${name}', ${i})">`;
+
+          // 마지막 행에 삭제(-) 버튼
+          if (i === count) {
+            html += `<span class="slide-reveal"><button class="red-minus" onclick="removeTier('${name}')"></button></span>`;
+          }
+          html += `</div></div>`;
+        }
+
+        // 개수 추가 버튼
+        html += `<div class="slide-down" style="text-align:center">`;
+        html += `<button class="tier-add-btn" onclick="addTier('${name}')">
+          + 개수 추가</button>`;
+        html += `</div>`;
+
+        html += `</div>`;
+      });
+
+      // 추가 카드
+      html += `<div class="add-card" id="addCardBtn" onclick="showAddForm()">`;
+      html += `<div class="add-card-icon">+</div>`;
+      html += `<div class="add-card-text">상품 추가</div>`;
+      html += `</div>`;
+
+      // 추가 폼 (점진적 노출 — 카드 스타일)
+      html += `<div class="add-form" id="addForm" style="position:relative">`;
+      html += `<button class="product-delete" onclick="hideAddForm()">삭제</button>`;
+      html += `<div class="add-form-title">새 상품 등록</div>`;
+      html += `<input class="form-input" id="newName" placeholder="상품명 (예: 고등어)" oninput="onNameInput()">`;
+      html += `<div id="newPriceRows" style="overflow:hidden;transition:max-height 0.3s ease;max-height:0"></div>`;
+      html += `<div id="formActions" style="margin-top:8px;text-align:center;opacity:0;pointer-events:none;transition:opacity 0.2s ease">`;
+      html += `<button class="tier-add-btn" onclick="addProduct()">추가</button>`;
+      html += `</div></div>`;
+
+      html += '</div>';
+      adminBody.innerHTML = html;
+    }
+
+    // 숫자 포맷 헬퍼
+    function toNumber(str) {
+      return parseInt(String(str).replace(/[^0-9]/g, '')) || 0;
+    }
+
+    function toComma(n) {
+      return n > 0 ? n.toLocaleString() + '원' : '';
+    }
+
+    // 입력 시 콤마 포맷 + 원 단위 + 저장
+    function formatAndUpdate(el, name, idx) {
+      const raw = el.value.replace(/[^0-9]/g, '');
+      const num = parseInt(raw) || 0;
+      // 커서 위치 보존 (원 앞에 유지)
+      const pos = el.selectionStart;
+      const before = el.value.length;
+      el.value = num > 0 ? num.toLocaleString() + '원' : '';
+      const after = el.value.length;
+      const newPos = Math.min(pos + (after - before), el.value.length - 1);
+      el.setSelectionRange(newPos < 0 ? 0 : newPos, newPos < 0 ? 0 : newPos);
+      priceDB[name][idx] = num;
+      saveDB();
+    }
+
+    // 개수 단계 추가
+    function addTier(name) {
+      priceDB[name].push(0);
+      saveDB();
+      renderAdmin();
+    }
+
+    // 개수 단계 삭제 (1개 남으면 항목 전체 삭제)
+    function removeTier(name) {
+      if (priceDB[name].length > 2) {
+        priceDB[name].pop();
+        saveDB();
+        renderAdmin();
+      } else {
+        delete priceDB[name];
+        saveDB();
+        renderAdmin();
+      }
+    }
+
+    // 상품 삭제
+    function deleteProduct(name) {
+      delete priceDB[name];
+      saveDB();
+      renderAdmin();
+    }
+
+    // 추가 폼 표시/숨김
+    let newFormTiers = 0;
+
+    function showAddForm() {
+      document.getElementById('addCardBtn').style.display = 'none';
+      const form = document.getElementById('addForm');
+      form.classList.add('show');
+      // 이전 입력값 초기화
+      const nameInput = document.getElementById('newName');
+      if (nameInput) nameInput.value = '';
+      newFormTiers = 0;
+      renderFormTiers();
+      // 가격/버튼 숨김
+      const rows = document.getElementById('newPriceRows');
+      const actions = document.getElementById('formActions');
+      if (rows) rows.style.maxHeight = '0';
+      if (actions) { actions.style.opacity = '0'; actions.style.pointerEvents = 'none'; }
+    }
+
+    function hideAddForm() {
+      document.getElementById('addCardBtn').style.display = '';
+      document.getElementById('addForm').classList.remove('show');
+    }
+
+    // 이름 입력 시 첫 번째 가격칸 등장
+    function onNameInput() {
+      const name = document.getElementById('newName').value.trim();
+      const rows = document.getElementById('newPriceRows');
+      const actions = document.getElementById('formActions');
+      if (name.length > 0 && newFormTiers === 0) {
+        newFormTiers = 1;
+        renderFormTiers();
+        // 가격 영역 슬라이드 다운
+        requestAnimationFrame(() => {
+          rows.style.maxHeight = rows.scrollHeight + 200 + 'px';
+          actions.style.opacity = '1';
+          actions.style.pointerEvents = 'auto';
+        });
+      } else if (name.length === 0) {
+        newFormTiers = 0;
+        rows.style.maxHeight = '0';
+        actions.style.opacity = '0';
+        actions.style.pointerEvents = 'none';
+        renderFormTiers();
+      }
+    }
+
+    // 새 상품 폼 입력 포맷 + 다음 행 등장/제거
+    function onNewPriceInput(el, idx) {
+      const raw = el.value.replace(/[^0-9]/g, '');
+      const num = parseInt(raw) || 0;
+      const pos = el.selectionStart;
+      const before = el.value.length;
+      el.value = num > 0 ? num.toLocaleString() + '원' : '';
+      const after = el.value.length;
+      const newPos = Math.min(pos + (after - before), el.value.length - 1);
+      el.setSelectionRange(newPos < 0 ? 0 : newPos, newPos < 0 ? 0 : newPos);
+
+      // 마지막 칸에 값이 입력되면 새 행 추가 (슬라이드 페이드 인)
+      if (num > 0 && idx === newFormTiers) {
+        newFormTiers++;
+        const container = document.getElementById('newPriceRows');
+        const row = document.createElement('div');
+        row.className = 'price-row row-enter';
+        row.innerHTML = `<span class="price-label">${newFormTiers}개</span><input class="price-input" type="text" inputmode="numeric" id="newP${newFormTiers}" placeholder="(단위: 원)" oninput="onNewPriceInput(this, ${newFormTiers})">`;
+        container.appendChild(row);
+        requestAnimationFrame(() => {
+          container.style.maxHeight = container.scrollHeight + 200 + 'px';
+        });
+      }
+
+      // 값이 비워졌을 때: 바로 다음 칸이 비어있다면 그 칸을 제거 (내 칸은 유지)
+      if (num === 0 && idx < newFormTiers) {
+        const nextInput = document.getElementById('newP' + (idx + 1));
+        if (nextInput && nextInput.value.replace(/[^0-9]/g, '') === '') {
+          const nextRow = nextInput.closest('.price-row');
+          nextRow.classList.remove('row-enter');
+          nextRow.classList.add('row-exit');
+          nextRow.addEventListener('animationend', () => nextRow.remove(), { once: true });
+          newFormTiers--;
+        }
+      }
+    }
+
+    function renderFormTiers() {
+      const container = document.getElementById('newPriceRows');
+      if (!container) return;
+      let html = '';
+      for (let i = 1; i <= newFormTiers; i++) {
+        const existing = document.getElementById('newP' + i);
+        const val = existing ? existing.value : '';
+        html += `<div class="price-row">`;
+        html += `<span class="price-label">${i}개</span>`;
+        html += `<input class="price-input" type="text" inputmode="numeric" id="newP${i}" value="${val}" placeholder="(단위: 원)" oninput="onNewPriceInput(this, ${i})">`;
+        html += `</div>`;
+      }
+      container.innerHTML = html;
+    }
+
+    // 상품 추가 (빈 칸은 건너뜀)
+    function addProduct() {
+      const name = document.getElementById('newName').value.trim();
+      if (!name) return;
+      if (priceDB[name]) { alert('이미 존재하는 상품입니다.'); return; }
+
+      const prices = [0];
+      for (let i = 1; i <= newFormTiers; i++) {
+        const v = toNumber(document.getElementById('newP' + i).value);
+        if (v > 0) {
+          prices.push(v);
+        }
+      }
+
+      if (prices.length < 2) { alert('최소 1개 가격을 입력해주세요.'); return; }
+
+      priceDB[name] = prices;
+      saveDB();
+      hideAddForm();
+      renderAdmin();
+    }
+
+  </script>
+
+</body>
+
+</html>

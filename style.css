@@ -1,0 +1,143 @@
+body, html {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: white; /* 마스크 외곽선 색상과 동일하게 */
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, sans-serif;
+}
+
+.input_video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover; /* 화면을 가득 채움 */
+  transform: scaleX(-1); /* 거울 모드 (좌우 반전) */
+  z-index: 1;
+}
+
+.gradient-mask {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 2;
+  /* 기본 마스크: 정중앙에 위치하게 설정, JS에서 얼굴 추적하여 업데이트 됨 */
+  background: radial-gradient(circle at 50% 50%, transparent 15%, rgba(255, 255, 255, 0.5) 30%, rgba(255, 255, 255, 1) 60%);
+  pointer-events: none; /* 클릭 이벤트 통과 */
+}
+
+/* STT (음성 인식) UI 요소 */
+.stt-container {
+  position: absolute;
+  bottom: 40px;
+  right: 40px; /* 우측 하단 주변 시야에 배치 */
+  z-index: 3;
+  pointer-events: none;
+}
+
+.stt-card {
+  background: rgba(20, 20, 20, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 24px 32px;
+  max-width: 400px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(16px); /* 글래스모피즘 효과 */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dot {
+  width: 12px;
+  height: 12px;
+  background-color: #4ade80; /* 부드러운 초록색 */
+  border-radius: 50%;
+  box-shadow: 0 0 12px #4ade80;
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { opacity: 0.5; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+  100% { opacity: 0.5; transform: scale(0.8); }
+}
+
+.status-text {
+  color: #a1a1aa;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.stt-text {
+  color: #fbbf24; /* 고대비 노란색 - 시인성 확보 */
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.4;
+  word-break: keep-all;
+  transition: color 0.2s ease;
+}
+
+/* 시작 화면 UI */
+.overlay-start {
+  position: absolute;
+  top: 0; left: 0; width: 100vw; height: 100vh;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px);
+  z-index: 10;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.intro-box {
+  background: white;
+  padding: 40px;
+  border-radius: 24px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+  text-align: center;
+  max-width: 480px;
+}
+
+.intro-box h1 {
+  margin: 0 0 16px 0;
+  font-size: 24px;
+  color: #111;
+}
+
+.intro-box p {
+  color: #555;
+  line-height: 1.6;
+  margin-bottom: 32px;
+  font-size: 16px;
+}
+
+#start-btn {
+  padding: 16px 40px;
+  font-size: 18px;
+  font-weight: 700;
+  color: white;
+  background-color: #000;
+  border: none;
+  border-radius: 50px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
+  transition: all 0.2s ease;
+}
+
+#start-btn:hover {
+  background-color: #333;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
